@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>💀 GROWBOT - PAIRING PANEL</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #000;
+      color: #0f0;
+      margin: 0;
+      padding: 0;
+      text-align: center;
+    }
+    .container {
+      max-width: 600px;
+      margin: 80px auto;
+      padding: 30px;
+      background: #111;
+      border: 1px solid #0f0;
+      border-radius: 12px;
+      box-shadow: 0 0 20px rgba(0, 255, 0, 0.1);
+    }
+    h1 { color: #0f0; margin: 0 0 20px; }
+    input, button {
+      padding: 12px;
+      margin: 10px 0;
+      width: 100%;
+      border: 1px solid #0f0;
+      background: #222;
+      color: #0f0;
+      border-radius: 6px;
+      font-size: 16px;
+    }
+    button {
+      background: #0f0;
+      color: #000;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    button:hover { background: #00ff44; transform: scale(1.02); }
+    button:disabled { background: #333; cursor: not-allowed; transform: scale(1); }
+    .code { 
+      font-family: 'Courier New', monospace;
+      font-size: 22px;
+      letter-spacing: 3px;
+      background: #222;
+      padding: 15px;
+      border-radius: 8px;
+      margin: 20px auto;
+      color: #0f0;
+      text-shadow: 0 0 5px #0f0;
+    }
+    .status { margin: 20px 0; line-height: 1.6; text-align: left; }
+    .footer { margin-top: 40px; font-size: 12px; color: #555; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔐 GROWBOT PAIRING</h1>
+    <p>Enter your WhatsApp number to link the bot.</p>
+
+    <!-- STEP 1: Phone Number Input -->
+    <div id="phoneForm">
+      <input type="text" id="phone" placeholder="Enter WhatsApp number (with country code)" />
+      <button onclick="startPairing()">LINK DEVICE</button>
+    </div>
+
+    <!-- STEP 2: Code Display & Status -->
+    <div id="pairingStatus" class="hidden">
+      <div id="code" class="code">WAITING FOR CODE...</div>
+      <div class="status" id="status">Requesting pairing code...</div>
+      <button onclick="refreshCode()" id="refreshBtn">REFRESH CODE</button>
+      <button onclick="cancelPairing()" class="cancel">CANCEL</button>
+    </div>
+  </div>
+
+  <div class="footer">
+    GrowBot • Silent. Efficient. Unstoppable.
+  </div>
+
+  <script>
+    let pairingId = null;
+    let pollTimer = null;
+
+    // Start pairing process
+    async function startPairing() {
+      const phoneInput = document.getElementById('phone').value.trim();
+      if (!phoneInput) {
+        alert('❌ Enter a valid WhatsApp number (e.g., 23456789012)');
+        return;
+      }
+
+      // Clean number
+      const number = phoneInput.replace(/\D/g, '');
+      if (number.length < 10 || number.length > 15) {
+        alert('❌ Invalid number. Must be 10-15 digits with country code.');
+        return;
+      }
+
+      // Disable form
+      document.getElementById('phoneForm').style.display = 'none';
+      document.getElementById('pairingStatus').classList.remove('hidden');
+
+      try {
+        const res = await fetch(`/api/pair?number=${encodeURIComponent(number)}`);
+        const data = await res.json();
+
+        if (data.ok) {
+          pairingId = data.pairingId;
+          window.history.replaceState(null, '', `?id=${encodeURIComponent(pairingId)}`);
+          trackPairing(pairingId);
+        } else {
+          document.getElementById('status').innerHTML = `<span style="color:#f00">❌ ${data.error}</span>`;
+        }
+      } catch (err) {
+        document.getElementById('status').innerHTML = `<span style="color:#f00">⚠️ Network error: ${err.message}</span>`;
+      }
+    }
+
+    // Poll pairing status
+    function trackPairing(id) {
+      fetchPairingStatus(id);
+      pollTimer = setInterval(() => fetchPairingStatus(id), 3000);
+    }
+
+    async function fetchPairingStatus(id) {
+      try {
+        const res = await fetch(`/api/pair/status?id=${encodeURIComponent(id)}`);
+        const data = await res.json();
+
+        if (!data.ok) {
+          document.getElementById('status').innerHTML = `<span style="color:#f00">❌ ${data.error}</span>`;
+          clearInterval(pollTimer);
+          return;
+        }
+
+        const codeEl = document.getElementById('code');
+        if (data.code) {
+          codeEl.innerText = data.code.match(/.{1,3}/g).join(' ');
+        } else {
+          codeEl.innerText = 'WAITING FOR CODE...';
+        }
+
+        let statusText = `Status: ${data.status.replace(/_/g, ' ')}`;
+        if (data.expiresInSeconds) {
+          statusText += ` | Expires in: ${Math.floor(data.expiresInSeconds / 60)}m ${data.expiresInSeconds % 60}s`;
+        }
+
+        document.getElementById('status').innerText = statusText;
+
+        if (data.status === 'open') {
+          clearInterval(pollTimer);
+          document.getElementById('status').innerHTML = '<span style="color:#0f0">✅ DEVICE LINKED SUCCESSFULLY!</span>';
+          document.getElementById('refreshBtn').disabled = true;
+        } else if (['failed', 'cancelled', 'expired'].includes(data.status)) {
+          clearInterval(pollTimer);
+          document.getElementById('status').innerHTML = `<span style="color:#f00">❌ ${data.status.toUpperCase()}: ${data.error || 'Session ended.'}</span>`;
+        }
+      } catch (err) {
+        console.error('Poll error:', err);
+      }
+    }
+
+    async function refreshCode() {
+      if (!pairingId) return;
+      document.getElementById('status').innerText = 'Refreshing code...';
+      try {
+        const res = await fetch(`/api/pair?number=&id=${encodeURIComponent(pairingId)}`);
+        const data = await res.json();
+        if (data.ok && data.pairingId) pairingId = data.pairingId;
+      } catch (e) { }
+    }
+
+    async function cancelPairing() {
+      if (!pairingId) return;
+      await fetch(`/api/pair/cancel?id=${encodeURIComponent(pairingId)}`);
+      document.getElementById('status').innerHTML = '❌ Pairing cancelled.';
+      clearInterval(pollTimer);
+      document.getElementById('refreshBtn').disabled = true;
+    }
+
+    // Resume if ID in URL
+    window.onload = () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const id = urlParams.get('id');
+      if (id) {
+        pairingId = id;
+        document.getElementById('phoneForm').classList.add('hidden');
+        document.getElementById('pairingStatus').classList.remove('hidden');
+        trackPairing(id);
+      }
+    };
+  </script>
+</body>
+</html>
